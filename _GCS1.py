@@ -136,31 +136,49 @@ class GroundStation( Thread ):
 
 
     def _MSG5( self ):
-        print( f"" )
-        print( f"=" * 80 )
-        print( f"\033[KThrust Command\n" )
+        interface = self.interface
+
+        interface.MSG_enter_interface( "Thrust Profile" )
+
+        print( f"\033[Kyou can stop with any key" )
+
+        sleep( 1 )
 
         txbf = zeros( 17, dtype=uint8 )
         txbf[0] = txh0_L_TO_1
         txbf[1] = txh1_L_TO_1
         txbf[3] = 5
 
-        Mode = input( f"\033[KAutomatic of Manual?\n>>> " )
+        interface.clean( 6 )
 
-        if ( Mode == "auto" ):
-            ThrustProfile = load( './HY_scenario.npy' )[80:]
-            for ThrustCMD in ThrustProfile:
+        profile = load( "./profile.npy" )
+
+        interface.lock = False
+
+        self.packet.stop = False
+
+        def send_profile( profile, txbf, packet ):
+
+            for ThrustCMD in profile:
                 txbf[4:6] = frombuffer(
                     ( ThrustCMD * TXRESOLUTION[THR_RES] ).astype(uint16).tobytes(), uint8
                 )
-                self.packet.write( txbf )
+                packet.write( txbf )
+
+                if ( packet.stop ):
+                    break
+
                 sleep( 0.02 )
-        else:
-            ThrustCMD = float64( input( f"\033[KThrust Command in N \n>>> " ) )
-            txbf[4:6] = frombuffer(
-                ( ThrustCMD * TXRESOLUTION[THR_RES] ).astype(uint16).tobytes(), uint8
-            )
-            self.packet.write( txbf )
+
+        thread = Thread( target=send_profile, args=[profile, txbf, self.packet], daemon=True )
+        thread.start()
+
+        input( "\033[K   <<< stop when you want with any key" )
+        interface.clean( 2 )
+
+        self.packet.stop = True
+
+        thread.join()
 
         
     def _MSG6( self ):
