@@ -1,11 +1,8 @@
-from threading import Thread
-
 from serial import Serial
 
 from _dataHYE import DataHYE
 
-from numpy import frombuffer
-from numpy import uint8, uint16
+from _parHYE import ParsingHYE
 
 
 
@@ -13,22 +10,16 @@ def Logger_HYE( serial: Serial, DB: DataHYE ):
 
     hdrf = 0
 
-    rxData = DB.rxData
-
-    serial.timeout = 0.003
+    serial.timeout = 0.1
 
     while ( DB.recording and DB.idxn != DB.n ):
 
-        idxn = DB.idxn
-
         if ( hdrf == 2 ):
-            byte = serial.read(12)
-            rxbf = frombuffer( byte, uint16 )
+            byte = serial.read(56)
             hdrf = 0
 
-            if ( len( rxbf ) == 6 ):
-                rxData[:,idxn] = rxbf
-                print( rxbf )
+            if ( len(byte) == 56 ):
+                ParsingHYE( DB, byte )
 
             DB.idxn += 1
             DB.flag  = True

@@ -4,7 +4,11 @@ import sys
 
 from serial import Serial
 
+from _interface import Interface
+
 from _resolution import *
+
+from _dataHYE import DataHYE
 
 from numpy import zeros
 from numpy import load
@@ -22,13 +26,16 @@ txh1_L_TO_1 = int( "0x4D", 16 )
 
 class GroundStation( Thread ):
 
-    def __init__( self, packet: Serial, thread: Thread ):
+    def __init__( self, packet: Serial, thread: Thread, DB: DataHYE, interface: Interface ):
 
         super().__init__()
+
+        self.interface = interface
 
         self.daemon = True
         self.packet = packet
         self.thread = thread
+        self.DB     = DB
 
         self.MSG1 = False
         self.MSG5 = False
@@ -39,32 +46,37 @@ class GroundStation( Thread ):
         self.MSG12 = 0
         self.MSG13 = 0
 
+        sleep( 1 )
+
 
     def run( self ):
+        
+        interface = self.interface
+        interface.start()
+
+        sleep( 0.5 )
 
         while ( not (
             self.MSG1 and self.MSG6 and self.MSG9
         ) ):
-            print( f"\033[K    ID       STATUS" )
-            print( f"\033[K1 : MSG1  => Target Position" )
-            print( f"\033[K5 : MSG5  => Thrust Command" )
-            print( f"\033[K6 : MSG6  => Control Command" )
-            print( f"\033[K7 : MSG7  => RESET" )
-            print( f"\033[K9 : MSG9  => Launch Sign({self.MSG1 and self.MSG9})" )
-            print( f"\033[K11: MSG11 => Control Authority" )
-            print( f"\033[K12: MSG12 => Mission Number" )
-            print( f"\033[K13: MSG13 => Ignition Flag" )
+            interface.lock = False
 
-            MSG = input( "\033[KYou need to set 1 parameter\n>>> " )
+            interface.previous['MSG9'] = self.MSG1 and self.MSG9
 
-            print( f"\033[K\033[A" * 12 )
+            MSG = input( "\033[K   <<< select command you want" )
+
+            interface.lock = True
+
+            interface.clean( 34 )
 
             print( f"\033[KMSG ID: {MSG}" )
 
             sleep( 1 )
 
+            interface.clean( 2 )
+
             if ( MSG == "exit" ):
-                print( f"\033[EExit Process\033[E" )
+                print( f"Exit Process\033[E" )
 
                 self.MSG1 = True
                 self.MSG6 = True
@@ -76,30 +88,31 @@ class GroundStation( Thread ):
             elif ( MSG == "5" ): self._MSG5()
             elif ( MSG == "6" ): self._MSG6()
             elif ( MSG == "7" ): self._MSG7()
+            elif ( MSG == "8" ): self._MSG8()
             elif ( MSG == "9" ): self._MSG9()
 
             elif ( MSG == "11" ): self._MSG11()
             elif ( MSG == "12" ): self._MSG12()
             elif ( MSG == "13" ): self._MSG13()
 
+            else: self.interface.print_margin( 31 )
+
     
     def _MSG1( self ):
-        print( f"" )
-        print( f"=" * 80 )
-        print( f"\033[KTarget Position\n" )
+        interface = self.interface
+        
+        interface.MSG_enter_interface( "Target Position" )
 
-        Ascent_pos = array(
-            list( map( float64, input( f"\033[KAscent position\n>>> " ).split() ) )
-        )
+        Ascent_pos  = interface.MSG_input_interface( "Ascent position" )
+        divert_dist = interface.MSG_input_interface( "divert distance" )
 
-        divert_dist = array(
-            list( map( float64, input( f"\033[Kdivert distance\n>>> " ).split() ) )
-        )
+        interface.clean( 5 )
 
-        print( f"\033[K\033[A" * 5 )
-        print( f"\033[KAscent position: {Ascent_pos}" )
-        print( f"\033[Kdivert distance: {divert_dist}" )
-        print( f"" )
+        self.interface.previous['MSG1'][0:3] = Ascent_pos
+        self.interface.previous['MSG1'][3:6] = divert_dist
+
+        interface.MSG_check_interface( "Ascent position", Ascent_pos  )
+        interface.MSG_check_interface( "divert distance", divert_dist )
 
         txbf = zeros(17, dtype=uint8 )
         txbf[0] = txh0_L_TO_1
@@ -115,15 +128,9 @@ class GroundStation( Thread ):
 
         self.packet.write( txbf )
 
-        data = self._echo()
+        interface.clean( 3 )
 
-        print(
-            f"\033[Kecho >>> ",
-            ( frombuffer( data[2:14], int16) * RXRESOLUTION[POS_RES] ).astype(float64)
-        )
-
-        print( f"=" * 80 )
-        print( f"" )
+        interface.print_margin( 27 )
 
         self.MSG1 = True
 
@@ -157,18 +164,20 @@ class GroundStation( Thread ):
 
         
     def _MSG6( self ):
-        print( f"" )
-        print( f"=" * 80 )
-        print( f"\033[KThrust Command\n" )
+        interface = self.interface
 
-        ThrustCMD = float64( input( f"\033[KThrust Command in % \n>>> " ) )
-        RCSCMD    = array(
-            list( map( int, input( f"\033[KRCS Command\n>>> " ).split() ) )
-        )
+        interface.MSG_enter_interface( "Thrust Command" )
 
-        print( f"\033[K\033[A" * 5 )
-        print( f"\033[KThrust Command: {ThrustCMD}" )
-        print( f"\033[KRCS Command   : {RCSCMD}" )
+        ThrustCMD = interface.MSG_input_interface( "Thrust Command in %" )
+        RCSCMD    = interface.MSG_input_interface( "RCS Command" )
+
+        interface.clean( 5 )
+
+        self.interface.previous['MSG6'][ 0 ] = ThrustCMD
+        self.interface.previous['MSG6'][1:5] = RCSCMD
+
+        interface.MSG_check_interface( "Thrust Command", ThrustCMD )
+        interface.MSG_check_interface( "RCS Command   ", RCSCMD )
 
         txbf = zeros( 17, dtype=uint8 )
         txbf[0] = txh0_L_TO_1
@@ -185,8 +194,7 @@ class GroundStation( Thread ):
 
         self.packet.write( txbf )
 
-        print( f"=" * 80 )
-        print( f"" )
+        interface.print_margin( 25 )
 
     
     def _MSG7( self ):
@@ -196,6 +204,41 @@ class GroundStation( Thread ):
         txbf[3] = 7
 
         self.packet.write( txbf )
+
+        self.MSG1 = False
+        self.MSG9 = False
+
+        self.interface.initialize_previous()
+
+        self.interface.print_margin( 31 )
+
+
+    def _MSG8( self ):
+        interface = self.interface
+        
+        interface.MSG_enter_interface( "Actuator Command" )
+
+        command = interface.MSG_input_interface( "command x, y" )
+
+        interface.clean( 3 )
+
+        interface.previous['MSG8'] = command
+
+        interface.MSG_check_interface( "x", command[0] )
+        interface.MSG_check_interface( "y", command[1] )
+
+        txbf = zeros( 17, dtype=uint8 )
+        txbf[0] = txh0_L_TO_1
+        txbf[1] = txh1_L_TO_1
+        txbf[3] = 8
+
+        txbf[4:8] = frombuffer(
+            ( command * TXRESOLUTION[ACT_RES] ).astype(uint16).tobytes(), uint8
+        )
+
+        self.packet.write( txbf )
+
+        self.interface.print_margin( 25 )
 
     
     def _MSG9( self ):
@@ -208,22 +251,23 @@ class GroundStation( Thread ):
 
         self.MSG9 = True
 
-        self.thread.start()
+        self.interface.print_margin( 31 )
 
     
     def _MSG11( self ):
-        print( f"" )
-        print( f"=" * 80 )
-        print( f"\033[KControl Authority\n" )
+        interface = self.interface
 
-        Authority = array(
-            list( map( int, input( f"\033[KTVC, RCS, FCV >>> " ).split() ) )
-        )
+        interface.MSG_enter_interface( "Control Authority" )
 
-        print( f"\033[K\033[A" * 2 )
-        print( f"\033[KTVC: {Authority[0]}" )
-        print( f"\033[KRCS: {Authority[1]}" )
-        print( f"\033[KFCV: {Authority[2]}" )
+        Authority = interface.MSG_input_interface( "TVC, RCS, FCV" )
+
+        interface.clean( 3 )
+
+        interface.previous['MSG11'] = Authority
+
+        interface.MSG_check_interface( "TVC", Authority[0] )
+        interface.MSG_check_interface( "RCS", Authority[1] )
+        interface.MSG_check_interface( "FCV", Authority[2] )
 
         txbf = zeros( 17, dtype=uint8 )
         txbf[0] = txh0_L_TO_1
@@ -236,16 +280,21 @@ class GroundStation( Thread ):
 
         self.packet.write( txbf )
 
-        print( f"=" * 80 )
-        print( f"" )
+        interface.print_margin( 24 )
 
 
     def _MSG12( self ):
-        print( f"" )
-        print( f"=" * 80 )
-        print( f"\033[KMission Number\n" )
+        interface = self.interface
 
-        MissionNumber = input( f"\033[KMission Number\n>>> " )
+        interface.MSG_enter_interface( "Mission Number" )
+
+        MissionNumber = interface.MSG_input_interface( "Mission Number" )
+
+        interface.clean( 3 )
+
+        interface.previous['MSG12'] = MissionNumber
+
+        interface.MSG_check_interface( "Mission Number", MissionNumber )
 
         txbf = zeros( 17, dtype=uint8 )
         txbf[0] = txh0_L_TO_1
@@ -256,21 +305,24 @@ class GroundStation( Thread ):
 
         self.packet.write( txbf )
 
-        print( f"=" * 80 )
-        print( f"" )
+        interface.print_margin( 26 )
 
 
     def _MSG13( self ):
-        print( f"" )
-        print( f"=" * 80 )
-        print( f"\033[KIgnition Flag\n" )
+        interface = self.interface
 
-        Ignite = input( f"\033[KIgnite Flag\n>>> " )
-        CutOff = input( f"\033[KCutoff Flag\n>>> " )
+        interface.MSG_enter_interface( "Ignition Flag" )
 
-        print( f"\033[K\033[A" * 5 )
-        print( f"\033[KIgnite Flag: {Ignite}" )
-        print( f"\033[KCutoff Flag: {CutOff}" )
+        Ignite = interface.MSG_input_interface( "Ignite Flag" )
+        CutOff = interface.MSG_input_interface( "Cutoff Flag" )
+
+        interface.clean( 5 )
+
+        interface.previous['MSG13'][0] = Ignite
+        interface.previous['MSG13'][1] = CutOff
+
+        interface.MSG_check_interface( "Ignite Flag", Ignite )
+        interface.MSG_check_interface( "Cutoff Flag", CutOff )
 
         txbf = zeros( 17, dtype=uint8 )
         txbf[0] = txh0_L_TO_1
@@ -282,8 +334,7 @@ class GroundStation( Thread ):
 
         self.packet.write( txbf )
 
-        print( f"=" * 80 )
-        print( f"" )
+        interface.print_margin( 25 )
 
     
     def _echo( self ):
@@ -294,6 +345,4 @@ class GroundStation( Thread ):
             if ( frombuffer( self.packet.read(), uint8 ) == txh0_L_TO_1 ):
                 return self.packet.read( 15 )
 
-        print( f"cannot receive echo from GCCM1" )
-        
         return zeros( 17, dtype=uint8 )
